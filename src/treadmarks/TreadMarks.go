@@ -18,15 +18,15 @@ var _ TreadMarksAPI = new(TreadMarks)
 ///////////////////////////////
 
 func newPageArrayEntry(numProcs uint8) *pageArrayEntry {
-	wnl := make([][]WritenoticeRecord, numProcs)
-	for j := range wnl {
-		wnl[j] = make([]WritenoticeRecord, 0)
+	wn := make([][]WritenoticeRecord, numProcs)
+	for j := range wn {
+		wn[j] = make([]WritenoticeRecord, 0)
 	}
 	entry := &pageArrayEntry{
 		curPos:        make([]int, numProcs),
 		hasCopy:      false,
 		copySet:      []uint8{0},
-		writenotices: wnl,
+		writenotices: wn,
 	}
 	return entry
 }
@@ -54,12 +54,12 @@ func (tm *TreadMarks) faultHandler(addr int, length int, faultType byte, accessT
 	for i := tm.memory.GetPageAddr(addr); i < addr+length; i = i + tm.memory.PageSize() {
 		addrList = append(addrList, i)
 	}
-	access := tm.memory.GetRightsList(addrList)
+	accessList := tm.memory.GetRightsList(addrList)
 
-	for i := range access {
+	for i := range accessList {
 		pageNr := int16(math.Floor(float64(tm.memory.GetPageAddr(addr)) / float64(tm.memory.PageSize())))
 		page := tm.pageArray[pageNr]
-		if access[i] == NO_ACCESS {
+		if accessList[i] == NO_ACCESS {
 			// first time access that page, i.e., missing page
 			if !page.hasCopy {
 				tm.sendCopyRequest(pageNr)
@@ -200,17 +200,17 @@ func (tm *TreadMarks) WriteBytes(addr int, val []byte) error {
 func (tm *TreadMarks) AcquireLock(id uint8) {
 	lock := tm.locks[id]
 	lock.Lock()
-	if lock.haveToken {
+	if !lock.haveToken {
+		tm.sendLockAcquireRequest(lock.last, id)
+		lock.last = tm.Id
+		lock.Unlock()
+		<-tm.channel
+	} else {
 		if lock.locked {
 			panic("Error: Already hold the lock")
 		}
 		lock.locked = true
 		lock.Unlock()
-	} else {
-		tm.sendLockAcquireRequest(lock.last, id)
-		lock.last = tm.Id
-		lock.Unlock()
-		<-tm.channel
 	}
 }
 
@@ -325,10 +325,10 @@ func (tm *TreadMarks) generateDiff(pageNr int16, twin []byte) {
 	}
 	tm.pageArray[pageNr].hasMissingDiffs = false
 
-	if len(diff) == 0 {
-		tm.pageArray[pageNr].writenotices[tm.Id] = tm.pageArray[pageNr].writenotices[tm.Id][:len(tm.pageArray[pageNr].writenotices[tm.Id])-1]
-	} else {
+	if len(diff) != 0 {
 		tm.pageArray[pageNr].writenotices[tm.Id][len(tm.pageArray[pageNr].writenotices[tm.Id])-1].Diff = diff
+	} else {
+		tm.pageArray[pageNr].writenotices[tm.Id] = tm.pageArray[pageNr].writenotices[tm.Id][:len(tm.pageArray[pageNr].writenotices[tm.Id])-1]
 	}
 }
 
@@ -344,8 +344,8 @@ func (tm *TreadMarks) createDiffRequests(pageNr int16) []DiffRequest {
 					diffRequests[i].First = oReq.First.min(req.First)
 					insert = false
 				} else if req.Last.larger(oReq.Last) {
-					diffRequests[i].to = req.to
 					diffRequests[i].First = oReq.First.min(req.First)
+					diffRequests[i].to = req.to
 					diffRequests[i].Last = oReq.Last.merge(req.Last)
 					insert = false
 				}

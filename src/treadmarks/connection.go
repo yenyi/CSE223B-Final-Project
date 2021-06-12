@@ -89,7 +89,7 @@ func (c *connection) Connect(ip string, port int) (int, error) {
 		write(newConn, []byte{0, byte(c.id), byte(c.port / 256), byte(c.port % 256)})
 		c.addPeer(id, newConn.(*net.TCPConn), port)
 		go c.receive(c.peers[id])
-		j += k
+		j = j + k
 	}
 	go c.receive(c.peers[otherId])
 	return c.id, nil
